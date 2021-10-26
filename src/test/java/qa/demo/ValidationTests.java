@@ -22,8 +22,13 @@ public class ValidationTests {
         $$(".react-datepicker__day").find(text("20")).click();
       //  $(".subjects-auto-complete__control").click();
        // $(".subjects-auto-complete__control--is-focused").setValue("Maths").pressEnter();
-        $("title.hobbies-checkbox-1").click();
+       // $(".custom-control custom-checkbox custom-control-inline").click();
+        $("#currentAddress").setValue("some adress");
+        $(".css-19bqh2r").click();
+        $$(".css-2613qy-menu").find(text("NCR")).click();
 
+
+        $(".css-2613qy-menu").setValue("some adress");
 
 
 
