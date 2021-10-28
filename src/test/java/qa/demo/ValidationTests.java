@@ -17,6 +17,7 @@ public class ValidationTests {
 
     @BeforeAll
     static void browserSetting(){
+
         Configuration.startMaximized = true;
     }
 
@@ -83,21 +84,6 @@ public class ValidationTests {
         $(".table-responsive").find(byText("Picture")).parent().shouldHave(text("img.png"));
         $(".table-responsive").find(byText("Address")).parent().shouldHave(text("some adress"));
         $(".table-responsive").find(byText("State and City")).parent().shouldHave(text("Haryana Karnal"));
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     }
 
