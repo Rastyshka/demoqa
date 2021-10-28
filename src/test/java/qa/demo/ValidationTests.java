@@ -16,13 +16,13 @@ import static com.codeborne.selenide.Selenide.*;
 public class ValidationTests {
 
     @BeforeAll
-    static void browserSetting(){
+    static void browserSetting() {
 
         Configuration.startMaximized = true;
     }
 
     @Test
-    void fillFormTest(){
+    void fillFormTest() {
         //open browser
         open("https://demoqa.com/automation-practice-form");
 
@@ -74,7 +74,7 @@ public class ValidationTests {
         $("#submit").click();
 
         //check fill data
-        $(".table-responsive").find(byText("Student Name")).parent().shouldHave(text("Some first name Some last name"));
+        $(".table-responsive tr:nth-child(1) td:nth-child(2)").shouldHave(text("Some first name Some last name"));
         $(".table-responsive").find(byText("Student Email")).parent().shouldHave(text("sample@gmail.com"));
         $(".table-responsive").find(byText("Gender")).parent().shouldHave(text("Male"));
         $(".table-responsive").find(byText("Mobile")).parent().shouldHave(text("7777777777"));
