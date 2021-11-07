@@ -1,59 +1,62 @@
-package qa.demo;
+package qa.demo.tests;
 
-import com.codeborne.selenide.Configuration;
-import org.junit.jupiter.api.BeforeAll;
+import com.github.javafaker.Faker;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.util.Locale;
 
 import static com.codeborne.selenide.Condition.text;
 import static com.codeborne.selenide.Selectors.byText;
-import static com.codeborne.selenide.Selenide.*;
+import static com.codeborne.selenide.Selenide.$;
+import static com.codeborne.selenide.Selenide.$$;
 
 
-public class ValidationTests {
+public class ValidationTests extends TestBase {
 
-    @BeforeAll
-    static void browserSetting() {
-        Configuration.startMaximized = true;
-    }
+    Faker faker = new Faker(new Locale("ru"));
+
+    String firstName = faker.name().firstName(),
+            lastName = faker.name().lastName(),
+            email = faker.internet().emailAddress(),
+            phoneNumber = faker.phoneNumber().subscriberNumber(10),
+            address = faker.address().fullAddress(),
+            state = "Haryana",
+            city = "Karnal";
 
     @Test
     void fillFormTest() {
-        //open browser
-        open("https://demoqa.com/automation-practice-form");
 
-        //fill first name
-        $("#firstName").setValue("Some first name");
+        //open page
+        registrationPage.openPage()
+                .typeFirstName(firstName)
+                .typeLastName(lastName)
+                .typeEmail(email)
+                .chooseGender("Male")
+                .typeNumber(phoneNumber)
+                .setDate("20", "March", "1996")
+                .typeSubject("M", "Math")
+                        .
+                
 
-        //fill last name
-        $("#lastName").setValue("Some last name");
 
-        //fill email
-        $("#userEmail").setValue("sample@gmail.com");
 
-        //choose gender
-        $(".custom-control-label").click();
 
-        //fill number
-        $("#userNumber").setValue("7777777777");
 
-        // choose date of birth
-        $("#dateOfBirthInput").click();
-        $(".react-datepicker__month-select").selectOptionByValue("2");
-        $(".react-datepicker__year-select").selectOptionByValue("1996");
-        $$(".react-datepicker__day").find(text("20")).click();
 
-        //choose subjects
-        $("#subjectsInput").click();
-        $("#subjectsInput").setValue("M");
-        $(byText("Maths")).click();
+
+
+
+
+
+
+
 
         //choose hobbies
         $("[for='hobbies-checkbox-1']").click();
 
         //upload image
-        File img = new File("src/test/resources/img.png");
+        File img = new File("src/test/resources/img/img.png");
         $("#uploadPicture").uploadFile(img);
 
         //fill adress
