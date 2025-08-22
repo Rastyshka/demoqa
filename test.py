@@ -4,6 +4,7 @@ from googleapiclient.errors import HttpError
 
 # Глобальный кэш для результатов API
 video_cache = {'timestamp': None, 'videos': None, 'shorts': None}
+CHANNEL_ID = 'UCSYnLE11DE8q5Q9eqbG5eTw'  # Фиксированный channel_id
 
 def load_last_content_id(user_id, content_type):
     try:
@@ -40,24 +41,22 @@ def check_new_videos(user_id, content_type):
         return {'error': "Не удалось открыть YouTube API. Проверьте YOUTUBE_API_KEY."}
     
     try:
-        channel_id = 'UCSYnLE11DE8q5Q9eqbG5eTw'
         last_content_id, last_published_at = load_last_content_id(user_id, content_type)
         logger.debug(f"Проверка {content_type} для user_id {user_id}: last_content_id='{last_content_id}', last_published_at={last_published_at}")
         
         # Проверяем кэш
         now = datetime.now(pytz.UTC)
-        cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 1800  # 30 минут
+        cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 3600  # 60 минут
         if cache_valid and video_cache[content_type]:
             logger.debug(f"Используется кэшированный результат для {content_type}, user_id {user_id}")
             response = video_cache[content_type]
         else:
             search_query = {
                 'part': 'snippet',
-                'channelId': channel_id,
-                'maxResults': 2,  # Уменьшено до 2 для экономии квоты
+                'channelId': CHANNEL_ID,
+                'maxResults': 2,  # Увеличено до 2 для проверки нескольких видео
                 'order': 'date',
-                'type': 'video',
-                'cacheControl': 'no-cache'
+                'type': 'video'
             }
             if content_type == 'shorts':
                 search_query['videoDuration'] = 'short'
@@ -65,7 +64,6 @@ def check_new_videos(user_id, content_type):
                 request = youtube.search().list(**search_query)
                 response = request.execute()
                 logger.debug(f"Ответ YouTube API для {content_type}, user_id {user_id}: {response}")
-                # Обновляем кэш
                 video_cache[content_type] = response
                 video_cache['timestamp'] = now
             except HttpError as e:
@@ -73,7 +71,7 @@ def check_new_videos(user_id, content_type):
                 return {'error': f"Не удалось проверить новые {content_type}: {str(e)}"}
         
         if not response.get('items'):
-            logger.info(f"Нет новых {content_type} на канале @loveanddeepspace (ID: {channel_id}) для user_id {user_id}")
+            logger.info(f"Нет новых {content_type} на канале @loveanddeepspace (ID: {CHANNEL_ID}) для user_id {user_id}")
             return {'error': f"Нет {content_type} на канале Love and Deepspace."}
         
         # Проверяем все возвращённые видео
@@ -134,9 +132,32 @@ def check_new_videos(user_id, content_type):
         
         logger.info(f"Не найдено новых {content_type} для user_id {user_id} после проверки всех видео")
         return {'error': f"Нет новых {content_type} для обработки."}
+    
     except Exception as e:
         logger.error(f"Ошибка проверки новых {content_type} на YouTube для user_id {user_id}: {e}", exc_info=True)
         return {'error': f"Не удалось проверить новые {content_type}: {str(e)}"}
+
+def get_last_video(update, context):
+    user_id = str(update.effective_user.id)
+    result = check_new_videos(user_id, 'video')
+    if result and 'error' not in result:
+        message = f"Последнее видео на канале Love and Deepspace:\nНазвание: {result['title']}\nСсылка: {result['url']}"
+        update.message.reply_text(message)
+        logger.info(f"Отправлено последнее видео пользователю {user_id}: {result['video_id']}")
+    else:
+        update.message.reply_text(result.get('error', 'Не удалось получить последнее видео.'))
+        logger.info(f"Не удалось отправить последнее видео пользователю {user_id}: {result.get('error', 'Неизвестная ошибка')}")
+
+def get_last_shorts(update, context):
+    user_id = str(update.effective_user.id)
+    result = check_new_videos(user_id, 'shorts')
+    if result and 'error' not in result:
+        message = f"Последний шортс на канале Love and Deepspace:\nНазвание: {result['title']}\nСсылка: {result['url']}"
+        update.message.reply_text(message)
+        logger.info(f"Отправлено последний шортс пользователю {user_id}: {result['video_id']}")
+    else:
+        update.message.reply_text(result.get('error', 'Не удалось получить последний шортс.'))
+        logger.info(f"Не удалось отправить последний шортс пользователю {user_id}: {result.get('error', 'Неизвестная ошибка')}")
 
 def send_new_videos(context):
     bot = context.bot
@@ -180,5 +201,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 def setup_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(send_new_videos, 'interval', minutes=30, args=[bot_context])  # Изменено на 30 минут
+    scheduler.add_job(send_new_videos, 'interval', minutes=60, args=[bot_context])  # 60 минут
+    scheduler.add_job(send_daily_schedule, 'cron', hour=6, minute=30, args=[bot_context])  # 09:00 MSK (UTC 06:30)
     scheduler.start()
