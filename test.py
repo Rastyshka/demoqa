@@ -46,9 +46,10 @@ def check_new_videos(user_id, content_type):
         
         now = datetime.now(pytz.UTC)
         cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 3600  # 60 минут
-        if cache_valid and video_cache[content_type]:
+        cache_key = 'videos' if content_type == 'video' else 'shorts'  # Исправлено
+        if cache_valid and video_cache[cache_key]:
             logger.debug(f"Используется кэшированный результат для {content_type}, user_id {user_id}")
-            response = video_cache[content_type]
+            response = video_cache[cache_key]
         else:
             search_query = {
                 'part': 'snippet',
@@ -63,7 +64,7 @@ def check_new_videos(user_id, content_type):
                 request = youtube.search().list(**search_query)
                 response = request.execute()
                 logger.debug(f"Ответ YouTube API для {content_type}, user_id {user_id}: {response}")
-                video_cache[content_type] = response
+                video_cache[cache_key] = response
                 video_cache['timestamp'] = now
             except HttpError as e:
                 logger.error(f"Ошибка YouTube API для {content_type}, user_id {user_id}: {e}")
