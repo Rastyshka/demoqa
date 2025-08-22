@@ -1,5 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+from googleapiclient.errors import HttpError
+
+# Глобальный кэш для результатов API
+video_cache = {'timestamp': None, 'videos': None, 'shorts': None}
 
 def load_last_content_id(user_id, content_type):
     try:
@@ -29,36 +33,45 @@ def save_last_content_id(user_id, content_type, video_id, published_at):
         logger.error(f"Ошибка сохранения last_{content_type}_id для user_id {user_id}: {e}", exc_info=True)
 
 def check_new_videos(user_id, content_type):
+    global video_cache
     youtube = init_youtube()
     if not youtube:
         logger.error(f"Ошибка инициализации YouTube API для user_id {user_id}")
         return {'error': "Не удалось открыть YouTube API. Проверьте YOUTUBE_API_KEY."}
+    
     try:
         channel_id = 'UCSYnLE11DE8q5Q9eqbG5eTw'
-        channel_request = youtube.channels().list(
-            part='id,snippet',
-            id=channel_id
-        )
-        channel_response = channel_request.execute()
-        if not channel_response.get('items'):
-            logger.error(f"Канал с ID {channel_id} не найден, пытаемся найти по хэндлу")
-            channel_id = find_channel_id(youtube)
-            if not channel_id:
-                return {'error': "Канал @loveanddeepspace не найден."}
         last_content_id, last_published_at = load_last_content_id(user_id, content_type)
         logger.debug(f"Проверка {content_type} для user_id {user_id}: last_content_id='{last_content_id}', last_published_at={last_published_at}")
-        search_query = {
-            'part': 'snippet',
-            'channelId': channel_id,
-            'maxResults': 5,  # Увеличиваем до 5 для проверки нескольких видео
-            'order': 'date',
-            'type': 'video'
-        }
-        if content_type == 'shorts':
-            search_query['videoDuration'] = 'short'
-        request = youtube.search().list(**search_query)
-        response = request.execute()
-        logger.debug(f"Ответ YouTube API для {content_type}, user_id {user_id}: {response}")
+        
+        # Проверяем кэш
+        now = datetime.now(pytz.UTC)
+        cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 1800  # 30 минут
+        if cache_valid and video_cache[content_type]:
+            logger.debug(f"Используется кэшированный результат для {content_type}, user_id {user_id}")
+            response = video_cache[content_type]
+        else:
+            search_query = {
+                'part': 'snippet',
+                'channelId': channel_id,
+                'maxResults': 2,  # Уменьшено до 2 для экономии квоты
+                'order': 'date',
+                'type': 'video',
+                'cacheControl': 'no-cache'
+            }
+            if content_type == 'shorts':
+                search_query['videoDuration'] = 'short'
+            try:
+                request = youtube.search().list(**search_query)
+                response = request.execute()
+                logger.debug(f"Ответ YouTube API для {content_type}, user_id {user_id}: {response}")
+                # Обновляем кэш
+                video_cache[content_type] = response
+                video_cache['timestamp'] = now
+            except HttpError as e:
+                logger.error(f"Ошибка YouTube API для {content_type}, user_id {user_id}: {e}")
+                return {'error': f"Не удалось проверить новые {content_type}: {str(e)}"}
+        
         if not response.get('items'):
             logger.info(f"Нет новых {content_type} на канале @loveanddeepspace (ID: {channel_id}) для user_id {user_id}")
             return {'error': f"Нет {content_type} на канале Love and Deepspace."}
@@ -70,50 +83,54 @@ def check_new_videos(user_id, content_type):
             published_date = datetime.strptime(published_at, '%Y-%m-%dT%H:%M:%S%z')
             logger.debug(f"Анализ {content_type} с ID {video_id}, publishedAt={published_at} для user_id {user_id}")
             
-            video_details = youtube.videos().list(
-                part='contentDetails,snippet',
-                id=video_id
-            ).execute()
-            if not video_details.get('items'):
-                logger.info(f"Не удалось получить детали для {content_type} {video_id} для user_id {user_id}")
-                continue
-            
-            content_details = video_details['items'][0]['contentDetails']
-            duration = parse_iso_duration(content_details['duration'])
-            if content_type == 'shorts' and duration > 60:
-                logger.info(f"Видео {video_id} не является шортсом (длительность: {duration} секунд) для user_id {user_id}")
-                continue
-            elif content_type == 'video' and duration <= 60:
-                logger.info(f"Видео {video_id} не является видео (длительность: {duration} секунд) для user_id {user_id}")
-                continue
-            
-            other_content_type = 'shorts' if content_type == 'video' else 'video'
-            last_other_content_id, _ = load_last_content_id(user_id, other_content_type)
-            if video_id == last_other_content_id:
-                logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как совпадает с последним {other_content_type}")
-                continue
-            
-            if video_id == last_content_id:
-                logger.info(f"{content_type.capitalize()} {video_id} уже обработан для user_id {user_id} (publishedAt: {published_at})")
-                continue
-            
-            # Проверка новизны по дате
-            if last_published_at:
-                last_published_date = datetime.strptime(last_published_at, '%Y-%m-%dT%H:%M:%S%z')
-                if published_date <= last_published_date:
-                    logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как не новее последнего обработанного (publishedAt: {published_at} <= {last_published_at})")
+            try:
+                video_details = youtube.videos().list(
+                    part='contentDetails,snippet',
+                    id=video_id
+                ).execute()
+                if not video_details.get('items'):
+                    logger.info(f"Не удалось получить детали для {content_type} {video_id} для user_id {user_id}")
                     continue
+                
+                content_details = video_details['items'][0]['contentDetails']
+                duration = parse_iso_duration(content_details['duration'])
+                if content_type == 'shorts' and duration > 60:
+                    logger.info(f"Видео {video_id} не является шортсом (длительность: {duration} секунд) для user_id {user_id}")
+                    continue
+                elif content_type == 'video' and duration <= 60:
+                    logger.info(f"Видео {video_id} не является видео (длительность: {duration} секунд) для user_id {user_id}")
+                    continue
+                
+                other_content_type = 'shorts' if content_type == 'video' else 'video'
+                last_other_content_id, _ = load_last_content_id(user_id, other_content_type)
+                if video_id == last_other_content_id:
+                    logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как совпадает с последним {other_content_type}")
+                    continue
+                
+                if video_id == last_content_id:
+                    logger.info(f"{content_type.capitalize()} {video_id} уже обработан для user_id {user_id} (publishedAt: {published_at})")
+                    continue
+                
+                # Проверка новизны по дате
+                if last_published_at:
+                    last_published_date = datetime.strptime(last_published_at, '%Y-%m-%dT%H:%M:%S%z')
+                    if published_date <= last_published_date:
+                        logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как не новее последнего обработанного (publishedAt: {published_at} <= {last_published_at})")
+                        continue
+                
+                # Проверка, чтобы видео не было старше 24 часов
+                if (now - published_date).total_seconds() > 24 * 3600:
+                    logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как слишком старое (publishedAt: {published_at})")
+                    continue
+                
+                video_title = video['snippet']['title']
+                video_url = f"https://www.youtube.com/watch?v={video_id}" if content_type == 'video' else f"https://www.youtube.com/shorts/{video_id}"
+                logger.info(f"Найден новый {content_type}: {video_title} (ID: {video_id}, длительность: {duration} секунд, publishedAt: {published_at}) для user_id {user_id}")
+                return {'title': video_title, 'url': video_url, 'video_id': video_id, 'published_at': published_at}
             
-            # Проверка, чтобы видео не было старше 24 часов
-            now = datetime.now(pytz.UTC)
-            if (now - published_date).total_seconds() > 24 * 3600:
-                logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как слишком старое (publishedAt: {published_at})")
+            except HttpError as e:
+                logger.error(f"Ошибка получения деталей для {content_type} {video_id}, user_id {user_id}: {e}")
                 continue
-            
-            video_title = video['snippet']['title']
-            video_url = f"https://www.youtube.com/watch?v={video_id}" if content_type == 'video' else f"https://www.youtube.com/shorts/{video_id}"
-            logger.info(f"Найден новый {content_type}: {video_title} (ID: {video_id}, длительность: {duration} секунд, publishedAt: {published_at}) для user_id {user_id}")
-            return {'title': video_title, 'url': video_url, 'video_id': video_id, 'published_at': published_at}
         
         logger.info(f"Не найдено новых {content_type} для user_id {user_id} после проверки всех видео")
         return {'error': f"Нет новых {content_type} для обработки."}
@@ -157,3 +174,11 @@ def send_new_videos(context):
                 logger.info(f"Ошибка для shorts user_id {user_id}: {new_shorts['error']}")
     except Exception as e:
         logger.error(f"Ошибка в send_new_videos: {e}", exc_info=True)
+
+# Настройка apscheduler
+from apscheduler.schedulers.background import BackgroundScheduler
+
+def setup_scheduler():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(send_new_videos, 'interval', minutes=30, args=[bot_context])  # Изменено на 30 минут
+    scheduler.start()
