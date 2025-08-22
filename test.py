@@ -143,7 +143,6 @@ def get_latest_content(update, context):
     
     try:
         now = datetime.now(pytz.UTC)
-        results = {'video': None, 'shorts': None}
         
         # Проверка видео
         cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 3600
@@ -169,6 +168,7 @@ def get_latest_content(update, context):
                 update.message.reply_text(f"Не удалось получить последнее видео: {str(e)}")
                 return
         
+        video_found = False
         if response.get('items'):
             for video in response['items']:
                 video_id = video['id']['videoId']
@@ -192,7 +192,9 @@ def get_latest_content(update, context):
                     
                     video_title = video['snippet']['title']
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
-                    results['video'] = {'title': video_title, 'url': video_url, 'video_id': video_id}
+                    update.message.reply_text(f"Последнее видео на канале Love and Deepspace:\nНазвание: {video_title}\nСсылка: {video_url}")
+                    logger.info(f"Отправлено последнее видео пользователю {user_id}: {video_id}")
+                    video_found = True
                     break
                 
                 except HttpError as e:
@@ -223,6 +225,7 @@ def get_latest_content(update, context):
                 update.message.reply_text(f"Не удалось получить последний шортс: {str(e)}")
                 return
         
+        shorts_found = False
         if response.get('items'):
             for video in response['items']:
                 video_id = video['id']['videoId']
@@ -246,25 +249,16 @@ def get_latest_content(update, context):
                     
                     video_title = video['snippet']['title']
                     video_url = f"https://www.youtube.com/shorts/{video_id}"
-                    results['shorts'] = {'title': video_title, 'url': video_url, 'video_id': video_id}
+                    update.message.reply_text(f"Последний шортс на канале Love and Deepspace:\nНазвание: {video_title}\nСсылка: {video_url}")
+                    logger.info(f"Отправлено последний шортс пользователю {user_id}: {video_id}")
+                    shorts_found = True
                     break
                 
                 except HttpError as e:
                     logger.error(f"Ошибка получения деталей для shorts {video_id}, user_id {user_id}: {e}")
                     continue
         
-        # Формирование сообщения
-        message = ""
-        if results['video']:
-            message += f"Последнее видео на канале Love and Deepspace:\nНазвание: {results['video']['title']}\nСсылка: {results['video']['url']}\n\n"
-            logger.info(f"Отправлено последнее видео пользователю {user_id}: {results['video']['video_id']}")
-        if results['shorts']:
-            message += f"Последний шортс на канале Love and Deepspace:\nНазвание: {results['shorts']['title']}\nСсылка: {results['shorts']['url']}"
-            logger.info(f"Отправлено последний шортс пользователю {user_id}: {results['shorts']['video_id']}")
-        
-        if message:
-            update.message.reply_text(message.strip())
-        else:
+        if not video_found and not shorts_found:
             logger.info(f"Не найдено ни видео, ни шортсов для user_id {user_id}")
             update.message.reply_text("Не удалось найти ни видео, ни шортсов на канале Love and Deepspace.")
     
