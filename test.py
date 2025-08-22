@@ -54,7 +54,7 @@ def check_new_videos(user_id, content_type):
             search_query = {
                 'part': 'snippet',
                 'channelId': CHANNEL_ID,
-                'maxResults': 2,  # Увеличено до 2 для проверки нескольких видео
+                'maxResults': 2,
                 'order': 'date',
                 'type': 'video'
             }
@@ -74,7 +74,6 @@ def check_new_videos(user_id, content_type):
             logger.info(f"Нет новых {content_type} на канале @loveanddeepspace (ID: {CHANNEL_ID}) для user_id {user_id}")
             return {'error': f"Нет {content_type} на канале Love and Deepspace."}
         
-        # Проверяем все возвращённые видео
         for video in response['items']:
             video_id = video['id']['videoId']
             published_at = video['snippet']['publishedAt']
@@ -109,14 +108,12 @@ def check_new_videos(user_id, content_type):
                     logger.info(f"{content_type.capitalize()} {video_id} уже обработан для user_id {user_id} (publishedAt: {published_at})")
                     continue
                 
-                # Проверка новизны по дате
                 if last_published_at:
                     last_published_date = datetime.strptime(last_published_at, '%Y-%m-%dT%H:%M:%S%z')
                     if published_date <= last_published_date:
                         logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как не новее последнего обработанного (publishedAt: {published_at} <= {last_published_at})")
                         continue
                 
-                # Проверка, чтобы видео не было старше 24 часов
                 if (now - published_date).total_seconds() > 24 * 3600:
                     logger.info(f"{content_type.capitalize()} {video_id} пропущен для user_id {user_id}, так как слишком старое (publishedAt: {published_at})")
                     continue
@@ -136,6 +133,13 @@ def check_new_videos(user_id, content_type):
     except Exception as e:
         logger.error(f"Ошибка проверки новых {content_type} на YouTube для user_id {user_id}: {e}", exc_info=True)
         return {'error': f"Не удалось проверить новые {content_type}: {str(e)}"}
+
+def last_video(update, context):
+    try:
+        get_last_video(update, context)  # Исправлен вызов с передачей update и context
+    except Exception as e:
+        logger.error(f"Ошибка в обработчике last_video для user_id {update.effective_user.id}: {e}", exc_info=True)
+        update.message.reply_text("Произошла ошибка при получении последнего видео.")
 
 def get_last_video(update, context):
     user_id = str(update.effective_user.id)
