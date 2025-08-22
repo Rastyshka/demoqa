@@ -44,7 +44,6 @@ def check_new_videos(user_id, content_type):
         last_content_id, last_published_at = load_last_content_id(user_id, content_type)
         logger.debug(f"Проверка {content_type} для user_id {user_id}: last_content_id='{last_content_id}', last_published_at={last_published_at}")
         
-        # Проверяем кэш
         now = datetime.now(pytz.UTC)
         cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 3600  # 60 минут
         if cache_valid and video_cache[content_type]:
@@ -134,23 +133,151 @@ def check_new_videos(user_id, content_type):
         logger.error(f"Ошибка проверки новых {content_type} на YouTube для user_id {user_id}: {e}", exc_info=True)
         return {'error': f"Не удалось проверить новые {content_type}: {str(e)}"}
 
+def get_latest_content(update, context):
+    user_id = str(update.effective_user.id)
+    youtube = init_youtube()
+    if not youtube:
+        logger.error(f"Ошибка инициализации YouTube API для user_id {user_id}")
+        update.message.reply_text("Не удалось открыть YouTube API.")
+        return
+    
+    try:
+        now = datetime.now(pytz.UTC)
+        results = {'video': None, 'shorts': None}
+        
+        # Проверка видео
+        cache_valid = video_cache['timestamp'] and (now - video_cache['timestamp']).total_seconds() < 3600
+        if cache_valid and video_cache['videos']:
+            logger.debug(f"Используется кэшированный результат для video, user_id {user_id}")
+            response = video_cache['videos']
+        else:
+            search_query = {
+                'part': 'snippet',
+                'channelId': CHANNEL_ID,
+                'maxResults': 2,
+                'order': 'date',
+                'type': 'video'
+            }
+            try:
+                request = youtube.search().list(**search_query)
+                response = request.execute()
+                logger.debug(f"Ответ YouTube API для video, user_id {user_id}: {response}")
+                video_cache['videos'] = response
+                video_cache['timestamp'] = now
+            except HttpError as e:
+                logger.error(f"Ошибка YouTube API для video, user_id {user_id}: {e}")
+                update.message.reply_text(f"Не удалось получить последнее видео: {str(e)}")
+                return
+        
+        if response.get('items'):
+            for video in response['items']:
+                video_id = video['id']['videoId']
+                published_at = video['snippet']['publishedAt']
+                logger.debug(f"Анализ video с ID {video_id}, publishedAt={published_at} для user_id {user_id}")
+                
+                try:
+                    video_details = youtube.videos().list(
+                        part='contentDetails,snippet',
+                        id=video_id
+                    ).execute()
+                    if not video_details.get('items'):
+                        logger.info(f"Не удалось получить детали для video {video_id} для user_id {user_id}")
+                        continue
+                    
+                    content_details = video_details['items'][0]['contentDetails']
+                    duration = parse_iso_duration(content_details['duration'])
+                    if duration <= 60:
+                        logger.info(f"Видео {video_id} не является видео (длительность: {duration} секунд) для user_id {user_id}")
+                        continue
+                    
+                    video_title = video['snippet']['title']
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                    results['video'] = {'title': video_title, 'url': video_url, 'video_id': video_id}
+                    break
+                
+                except HttpError as e:
+                    logger.error(f"Ошибка получения деталей для video {video_id}, user_id {user_id}: {e}")
+                    continue
+        
+        # Проверка шортсов
+        if cache_valid and video_cache['shorts']:
+            logger.debug(f"Используется кэшированный результат для shorts, user_id {user_id}")
+            response = video_cache['shorts']
+        else:
+            search_query = {
+                'part': 'snippet',
+                'channelId': CHANNEL_ID,
+                'maxResults': 2,
+                'order': 'date',
+                'type': 'video',
+                'videoDuration': 'short'
+            }
+            try:
+                request = youtube.search().list(**search_query)
+                response = request.execute()
+                logger.debug(f"Ответ YouTube API для shorts, user_id {user_id}: {response}")
+                video_cache['shorts'] = response
+                video_cache['timestamp'] = now
+            except HttpError as e:
+                logger.error(f"Ошибка YouTube API для shorts, user_id {user_id}: {e}")
+                update.message.reply_text(f"Не удалось получить последний шортс: {str(e)}")
+                return
+        
+        if response.get('items'):
+            for video in response['items']:
+                video_id = video['id']['videoId']
+                published_at = video['snippet']['publishedAt']
+                logger.debug(f"Анализ shorts с ID {video_id}, publishedAt={published_at} для user_id {user_id}")
+                
+                try:
+                    video_details = youtube.videos().list(
+                        part='contentDetails,snippet',
+                        id=video_id
+                    ).execute()
+                    if not video_details.get('items'):
+                        logger.info(f"Не удалось получить детали для shorts {video_id} для user_id {user_id}")
+                        continue
+                    
+                    content_details = video_details['items'][0]['contentDetails']
+                    duration = parse_iso_duration(content_details['duration'])
+                    if duration > 60:
+                        logger.info(f"Видео {video_id} не является шортсом (длительность: {duration} секунд) для user_id {user_id}")
+                        continue
+                    
+                    video_title = video['snippet']['title']
+                    video_url = f"https://www.youtube.com/shorts/{video_id}"
+                    results['shorts'] = {'title': video_title, 'url': video_url, 'video_id': video_id}
+                    break
+                
+                except HttpError as e:
+                    logger.error(f"Ошибка получения деталей для shorts {video_id}, user_id {user_id}: {e}")
+                    continue
+        
+        # Формирование сообщения
+        message = ""
+        if results['video']:
+            message += f"Последнее видео на канале Love and Deepspace:\nНазвание: {results['video']['title']}\nСсылка: {results['video']['url']}\n\n"
+            logger.info(f"Отправлено последнее видео пользователю {user_id}: {results['video']['video_id']}")
+        if results['shorts']:
+            message += f"Последний шортс на канале Love and Deepspace:\nНазвание: {results['shorts']['title']}\nСсылка: {results['shorts']['url']}"
+            logger.info(f"Отправлено последний шортс пользователю {user_id}: {results['shorts']['video_id']}")
+        
+        if message:
+            update.message.reply_text(message.strip())
+        else:
+            logger.info(f"Не найдено ни видео, ни шортсов для user_id {user_id}")
+            update.message.reply_text("Не удалось найти ни видео, ни шортсов на канале Love and Deepspace.")
+    
+    except Exception as e:
+        logger.error(f"Ошибка получения последнего контента для user_id {user_id}: {e}", exc_info=True)
+        update.message.reply_text("Произошла ошибка при получении последнего контента.")
+
 def last_video(update, context):
     try:
-        get_last_video(update, context)  # Исправлен вызов с передачей update и context
+        get_latest_content(update, context)
     except Exception as e:
         logger.error(f"Ошибка в обработчике last_video для user_id {update.effective_user.id}: {e}", exc_info=True)
-        update.message.reply_text("Произошла ошибка при получении последнего видео.")
-
-def get_last_video(update, context):
-    user_id = str(update.effective_user.id)
-    result = check_new_videos(user_id, 'video')
-    if result and 'error' not in result:
-        message = f"Последнее видео на канале Love and Deepspace:\nНазвание: {result['title']}\nСсылка: {result['url']}"
-        update.message.reply_text(message)
-        logger.info(f"Отправлено последнее видео пользователю {user_id}: {result['video_id']}")
-    else:
-        update.message.reply_text(result.get('error', 'Не удалось получить последнее видео.'))
-        logger.info(f"Не удалось отправить последнее видео пользователю {user_id}: {result.get('error', 'Неизвестная ошибка')}")
+        update.message.reply_text("Произошла ошибка при получении последнего контента.")
 
 def get_last_shorts(update, context):
     user_id = str(update.effective_user.id)
