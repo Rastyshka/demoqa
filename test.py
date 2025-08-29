@@ -31,3 +31,38 @@ ENCOURAGE_MESSAGES = [
     "Дорогая, этот день — твой. Захвати его, как я захватываю сердца.",
     "Котёнок, ты — буря, я — твой ветер. Вместе мы непобедимы!"
 ]
+
+# FIX: Модифицированная функция send_daily_schedule с подбадриваниями Sylus
+def send_daily_schedule(context):
+    bot = context.bot
+    try:
+        collection = init_mongo()['youtube']
+        users = collection.find({'notifications_enabled': True})
+        users_list = list(users)
+        logger.info(f"Запуск send_daily_schedule для {len(users_list)} пользователей")
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        current_time_msk = datetime.now(moscow_tz)
+        current_date_msk = current_time_msk.strftime('%Y-%m-%d')
+        import random  # NEW: Для выбора случайного сообщения
+
+        for entry in users_list:
+            user_id = entry['user_id']
+            # Получаем расписание аниме (предполагается существующая логика)
+            schedule = get_anime_schedule(current_date_msk)  # Замените на вашу функцию получения расписания
+            if schedule:
+                message = f"📺 Расписание аниме на {current_date_msk}:\n\n{schedule}"
+            else:
+                message = "📺 Сегодня нет новых серий аниме. Но не расслабляйся, котёнок!"
+
+            # NEW: Добавляем подбадривание от Sylus, если включено
+            if are_encourage_notifications_enabled(user_id):
+                encourage_message = random.choice(ENCOURAGE_MESSAGES)
+                message += f"\n\n{encourage_message}\n— Сайлус К. Уилсон, глава Onychinus 🎌"
+
+            if send_message_with_retry(bot, user_id, message):
+                logger.info(f"Расписание и подбадривание отправлены пользователю {user_id} в {current_time_msk.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            else:
+                logger.error(f"Не удалось отправить расписание пользователю {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка в send_daily_schedule: {e}", exc_info=True)
+        send_error_notification("Ежедневное расписание", str(e))
